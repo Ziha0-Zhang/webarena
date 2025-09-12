@@ -11,7 +11,12 @@ import time
 from pathlib import Path
 
 import openai
-
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"PEP 484 type hint .* deprecated by PEP 585",
+    module=r"beartype\..*",
+)
 from agent import (
     Agent,
     PromptAgent,
@@ -213,7 +218,8 @@ def early_stop(
 
     return False, ""
 
-
+#在给定任务配置列表上，驱动浏览器环境按步骤与网站交互
+#循环调用智能体产出动作，记录轨迹，早停与评测打分，最终汇总成绩
 def test(
     args: argparse.Namespace,
     agent: Agent | PromptAgent | TeacherForcingAgent,
@@ -239,14 +245,15 @@ def test(
         save_trace_enabled=args.save_trace_enabled,
         sleep_after_execution=args.sleep_after_execution,
     )
-
+    #遍历每个任务
     for config_file in config_file_list:
         try:
+            #准备渲染器，用于可视化/保存结果
             render_helper = RenderHelper(
                 config_file, args.result_dir, args.action_set_tag
             )
 
-            # get intent
+            #
             with open(config_file) as f:
                 _c = json.load(f)
                 intent = _c["intent"]
@@ -259,7 +266,7 @@ def test(
                     # subprocess to renew the cookie
                     subprocess.run(
                         [
-                            "python",
+                            "uv", "run",
                             "browser_env/auto_login.py",
                             "--auth_folder",
                             temp_dir,
@@ -326,7 +333,7 @@ def test(
                     # add a action place holder
                     trajectory.append(create_stop_action(""))
                     break
-
+            # 对当前轨迹打分
             evaluator = evaluator_router(config_file)
             score = evaluator(
                 trajectory=trajectory,
@@ -347,7 +354,7 @@ def test(
                     Path(args.result_dir) / "traces" / f"{task_id}.zip"
                 )
 
-        except openai.error.OpenAIError as e:
+        except (openai.APIError, openai.RateLimitError, openai.APIConnectionError, openai.APITimeoutError) as e:
             logger.info(f"[OpenAI Error] {repr(e)}")
         except Exception as e:
             logger.info(f"[Unhandled Error] {repr(e)}]")
@@ -362,7 +369,8 @@ def test(
         render_helper.close()
 
     env.close()
-    logger.info(f"Average score: {sum(scores) / len(scores)}")
+    avg_score = (sum(scores) / len(scores)) if len(scores) > 0 else 0.0
+    logger.info(f"Average score: {avg_score}")
 
 
 def prepare(args: argparse.Namespace) -> None:
@@ -380,7 +388,8 @@ def prepare(args: argparse.Namespace) -> None:
     if not Path(result_dir).exists():
         Path(result_dir).mkdir(parents=True, exist_ok=True)
         args.result_dir = result_dir
-        logger.info(f"Create result dir: {result_dir}")
+    
+    logger.info(f"Result dir is: {result_dir}")
 
     if not (Path(result_dir) / "traces").exists():
         (Path(result_dir) / "traces").mkdir(parents=True)
@@ -421,16 +430,18 @@ if __name__ == "__main__":
     ed_idx = args.test_end_idx
     for i in range(st_idx, ed_idx):
         test_file_list.append(f"config_files/{i}.json")
+        print(f"Add config_files/{i}.json as task {i}")
     if "debug" not in args.result_dir:
         test_file_list = get_unfinished(test_file_list, args.result_dir)
-
+    
+    
     if len(test_file_list) == 0:
         logger.info("No task left to run")
     else:
         print(f"Total {len(test_file_list)} tasks left")
-        args.render = False
+        # args.render = False
         args.render_screenshot = True
-        args.save_trace_enabled = True
+        # args.save_trace_enabled = True
 
         args.current_viewport_only = True
         dump_config(args)

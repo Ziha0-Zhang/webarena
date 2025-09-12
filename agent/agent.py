@@ -96,7 +96,7 @@ class TeacherForcingAgent(Agent):
             self.set_action_set_tag(tag)
             self.set_actions(action_seq)
 
-
+#“网页自动化任务状态”转译为promt，再把模型回复转译为“可执行的浏览器动作”
 class PromptAgent(Agent):
     """prompt-based agent that emits action given the history"""
 
@@ -118,14 +118,15 @@ class PromptAgent(Agent):
     @beartype
     def next_action(
         self, trajectory: Trajectory, intent: str, meta_data: dict[str, Any]
-    ) -> Action:
+    ) -> Action: # 生成下一步动作
+        #使用prompt构造器，生成prompt
         prompt = self.prompt_constructor.construct(
             trajectory, intent, meta_data
-        )
+        ) 
         lm_config = self.lm_config
         n = 0
         while True:
-            response = call_llm(lm_config, prompt)
+            response = call_llm(lm_config, prompt) #输入prompt获取模型回复
             force_prefix = self.prompt_constructor.instruction[
                 "meta_data"
             ].get("force_prefix", "")
@@ -134,7 +135,7 @@ class PromptAgent(Agent):
             try:
                 parsed_response = self.prompt_constructor.extract_action(
                     response
-                )
+                )# 抽取动作字符串，根据格式将其解析成具体动作结构
                 if self.action_set_tag == "id_accessibility_tree":
                     action = create_id_based_action(parsed_response)
                 elif self.action_set_tag == "playwright":
@@ -143,11 +144,11 @@ class PromptAgent(Agent):
                     raise ValueError(
                         f"Unknown action type {self.action_set_tag}"
                     )
-                action["raw_prediction"] = response
+                action["raw_prediction"] = response #保存模型回复的历史
                 break
             except ActionParsingError as e:
                 if n >= lm_config.gen_config["max_retry"]:
-                    action = create_none_action()
+                    action = create_none_action() #空操作
                     action["raw_prediction"] = response
                     break
 
@@ -165,13 +166,15 @@ def construct_agent(args: argparse.Namespace) -> Agent:
         agent = TeacherForcingAgent()
     elif args.agent_type == "prompt":
         with open(args.instruction_path) as f:
-            constructor_type = json.load(f)["meta_data"]["prompt_constructor"]
+            constructor_type = json.load(f)["meta_data"]["prompt_constructor"] #默认CoTPromptConstructor
         tokenizer = Tokenizer(args.provider, args.model)
         prompt_constructor = eval(constructor_type)(
-            args.instruction_path, lm_config=llm_config, tokenizer=tokenizer
+            args.instruction_path,
+            lm_config=llm_config,
+            tokenizer=tokenizer
         )
         agent = PromptAgent(
-            action_set_tag=args.action_set_tag,
+            action_set_tag=args.action_set_tag, #默认 id_accessibility_tree
             lm_config=llm_config,
             prompt_constructor=prompt_constructor,
         )

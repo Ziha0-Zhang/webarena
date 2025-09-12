@@ -35,6 +35,7 @@ class PromptConstructor(object):
         self.instruction: Instruction = instruction
         self.tokenizer = tokenizer
 
+    #把“系统引导、示例对、当前输入”组装成所需的 API 输入格式。
     def get_lm_api_input(
         self, intro: str, examples: list[tuple[str, str]], current: str
     ) -> APIInput:
@@ -202,7 +203,9 @@ class DirectPromptConstructor(PromptConstructor):
                 f"Cannot parse action from response {response}"
             )
 
-
+#基于轨迹与模板构造COT风格的提示词，交给LLM生成答案
+#并从模型回复中用特定分隔符抽取出“下一步动作”字符串
+#将其中的真实网址映射回本地环境可用的测试网址
 class CoTPromptConstructor(PromptConstructor):
     """The agent will perform step-by-step reasoning before the answer"""
 
@@ -213,7 +216,7 @@ class CoTPromptConstructor(PromptConstructor):
         tokenizer: Tokenizer,
     ):
         super().__init__(instruction_path, lm_config, tokenizer)
-        self.answer_phrase = self.instruction["meta_data"]["answer_phrase"]
+        self.answer_phrase = self.instruction["meta_data"]["answer_phrase"] #默认“In summary, the next action I will perform is”
 
     def construct(
         self,
@@ -224,29 +227,33 @@ class CoTPromptConstructor(PromptConstructor):
         intro = self.instruction["intro"]
         examples = self.instruction["examples"]
         template = self.instruction["template"]
-        keywords = self.instruction["meta_data"]["keywords"]
-        state_info: StateInfo = trajectory[-1]  # type: ignore[assignment]
+        keywords = self.instruction["meta_data"]["keywords"]#默认["url","objective","observation","previous_action"]
+        #取当前轨迹的最后一步 state_info（包含观测与页面信息）
+        state_info: StateInfo = trajectory[-1]  # type: ignore[assignment] 
 
+        #获取文本模态的观测 obs，并按照需求截断
         obs = state_info["observation"][self.obs_modality]
         max_obs_length = self.lm_config.gen_config["max_obs_length"]
         if max_obs_length:
             obs = self.tokenizer.decode(self.tokenizer.encode(obs)[:max_obs_length])  # type: ignore[arg-type]
-
+        #从状态信息中取页面对象与当前 URL
         page = state_info["info"]["page"]
         url = page.url
+        #从meta_data中取上一条动作字符串，用于上下文提示。
         previous_action_str = meta_data["action_history"][-1]
         current = template.format(
-            objective=intent,
-            url=self.map_url_to_real(url),
-            observation=obs,
-            previous_action=previous_action_str,
+            objective=intent,#当前任务意图
+            url=self.map_url_to_real(url),#将本地环境URL转为真实世界URL
+            observation=obs,#当前观测文本
+            previous_action=previous_action_str,#上一步动作
         )
-
+        #确保模板中所有关键占位符均已被替换
         assert all([f"{{k}}" not in current for k in keywords])
 
         prompt = self.get_lm_api_input(intro, examples, current)
         return prompt
 
+    #从模型回复中抽取“动作字符串”：
     def _extract_action(self, response: str) -> str:
         # find the first occurence of action
         action_splitter = self.instruction["meta_data"]["action_splitter"]
