@@ -158,4 +158,5 @@ config_files*/*8.json
 config_files*/*9.json
 config_files*/test.json
 .openhands/
-
+my_results/
+config_files/[0-811]*.json
